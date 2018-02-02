@@ -227,7 +227,7 @@ namespace Flexinets.iPass
         /// <param name="usernamedomain"></param>
         /// <param name="email"></param>
         /// <returns></returns>
-        public async Task<String> ActivateUserAsync(Int32 customerId, String usernamedomain)
+        public async Task<XDocument> ActivateUserAsync(Int32 customerId, String usernamedomain)
         {
             var url = "https://api.ipass.com/v1/users?service=activate";
 
@@ -238,9 +238,22 @@ namespace Flexinets.iPass
             using (var client = CreateAuthenticatedHttpClient(customerId))
             {
                 var response = await client.PostAsync(url, new StringContent(content, Encoding.UTF8));
-                var responseXml = XDocument.Parse(await response.Content.ReadAsStringAsync());
-                return responseXml.ToString();
+                return XDocument.Parse(await response.Content.ReadAsStringAsync());
             }
+        }
+
+
+        /// <summary>
+        /// Suspending and activating the user will generate a new activation url
+        /// </summary>
+        /// <param name="customerId"></param>
+        /// <param name="usernamedomain"></param>
+        /// <returns></returns>
+        public async Task<String> RefreshActivationUrl(Int32 customerId, String usernamedomain)
+        {
+            await SuspendUserAsync(customerId, usernamedomain);
+            var response = await ActivateUserAsync(customerId, usernamedomain);
+            return response.Root.Element("selfServiceActivationUrl").Value;
         }
 
 
@@ -255,7 +268,6 @@ namespace Flexinets.iPass
                 var json = JsonConvert.SerializeObject(list);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
                 var response = await client.PostAsync("https://api.flexinets.se/api/ipass/sendinvite", content);
-                _log.Error(response);
             }
         }
 
