@@ -5,7 +5,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="log4net" Version="2.0.8" />    
+    <PackageReference Include="log4net" Version="2.0.8" />
+    <PackageReference Include="Microsoft.Azure.ServiceBus" Version="2.0.0" />    
   </ItemGroup>
 
   <ItemGroup Condition=" '$(TargetFramework)' == 'net471' ">
@@ -15,6 +16,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\FlexinetsPortalCore\Flexinets.Portal.Models\Flexinets.Portal.Models.NetStandard.csproj" />
     <ProjectReference Include="..\Flexinets.Common.NetStandard\Flexinets.Common.NetStandard.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Update="NETStandard.Library" Version="2.0.1" />
   </ItemGroup>
 
 </Project>

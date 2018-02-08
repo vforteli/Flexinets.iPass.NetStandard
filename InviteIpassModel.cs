@@ -10,6 +10,6 @@ namespace Flexinets.iPass.Models
         public String email { get; set; }
 
         [Required]
-        public String activationUrl { get; set; }
+        public Guid activationToken { get; set; }
     }
 }

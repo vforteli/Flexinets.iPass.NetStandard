@@ -2,13 +2,17 @@
 using Flexinets.iPass.Models;
 using Flexinets.Portal.Models;
 using log4net;
+using Microsoft.Azure.ServiceBus;
+using Microsoft.Azure.ServiceBus.Core;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Net;
+using System.IO;
 using System.Net.Http;
+using System.Runtime.Serialization;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml;
 using System.Xml.Linq;
 
 namespace Flexinets.iPass
@@ -17,19 +21,17 @@ namespace Flexinets.iPass
     {
         private readonly ILog _log = LogManager.GetLogger(typeof(iPassProvisioningApiClient));
         private readonly String _ipassApiKey;
-        private readonly String _flexinetsApiUsername;
-        private readonly String _flexinetsApiPassword;
+        private readonly String _serviceBusConnectionString;
 
 
         /// <summary>
         /// Handles provisioning of hosted users
         /// </summary>
         /// <param name="contextFactory"></param>
-        public iPassProvisioningApiClient(String ipassApiKey, String flexinetsApiUsername, String flexinetsApiPassword)
+        public iPassProvisioningApiClient(String ipassApiKey, String serviceBusConnectionString)
         {
             _ipassApiKey = ipassApiKey;
-            _flexinetsApiUsername = flexinetsApiUsername;
-            _flexinetsApiPassword = flexinetsApiPassword;
+            _serviceBusConnectionString = serviceBusConnectionString;
         }
 
 
@@ -107,7 +109,7 @@ namespace Flexinets.iPass
         /// <param name="customerId"></param>
         /// <param name="user"></param>
         /// <returns></returns>
-        public async Task<(String hostedUserId, String activationUrl)> CreateUserAsync(Int32 customerId, UserModel user, Boolean sendInvite = true)
+        public async Task<(String hostedUserId, String activationUrl)> CreateUserAsync(Int32 customerId, UserModel user)
         {
             var url = new Uri("https://api.ipass.com/v1/users?service=create");
             if (String.IsNullOrEmpty(user.Fullname))
@@ -146,12 +148,6 @@ namespace Flexinets.iPass
                 var responseXml = XDocument.Parse(await response.Content.ReadAsStringAsync());
                 var userid = responseXml.Root.Element("endUserId").Value;
                 var activationUrl = responseXml.Root.Element("selfServiceActivationUrl").Value;
-
-                if (sendInvite)
-                {
-                    await SendInviteAsync(new InviteIpassModel { email = user.EmailAddress, activationUrl = activationUrl });
-                }
-
                 return (userid, activationUrl);
             }
         }
@@ -263,11 +259,17 @@ namespace Flexinets.iPass
         /// <returns></returns>
         public async Task SendInviteAsync(IEnumerable<InviteIpassModel> list)
         {
-            using (var client = new HttpClient(new HttpClientHandler { Credentials = new NetworkCredential(_flexinetsApiUsername, _flexinetsApiPassword) }))
+            // todo jfc it cant be this hard?
+            var serializer = new DataContractSerializer(typeof(IEnumerable<InviteIpassModel>));
+            var ms = new MemoryStream();
+            using (var binaryDictionaryWriter = XmlDictionaryWriter.CreateBinaryWriter(ms))
             {
-                var json = JsonConvert.SerializeObject(list);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var response = await client.PostAsync("https://api.flexinets.se/api/ipass/sendinvite", content);
+                serializer.WriteObject(binaryDictionaryWriter, list);
+                binaryDictionaryWriter.Flush();
+                var message = new Message(ms.ToArray());
+
+                var messageSender = new MessageSender(new ServiceBusConnectionStringBuilder(_serviceBusConnectionString));
+                await messageSender.SendAsync(message);
             }
         }
 
@@ -277,9 +279,9 @@ namespace Flexinets.iPass
         /// </summary>
         /// <param name="model"></param>
         /// <returns></returns>
-        public async Task SendInviteAsync(InviteIpassModel model)
+        public async Task SendInviteAsync(String email, Guid activationToken)
         {
-            await SendInviteAsync(new List<InviteIpassModel> { model });
+            await SendInviteAsync(new List<InviteIpassModel> { new InviteIpassModel { activationToken = activationToken, email = email } });
         }
     }
 }
