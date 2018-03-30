@@ -14,6 +14,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
+using System.Linq;
 
 namespace Flexinets.iPass
 {
@@ -30,6 +31,10 @@ namespace Flexinets.iPass
         /// <param name="contextFactory"></param>
         public iPassProvisioningApiClient(String ipassApiKey, String serviceBusConnectionString)
         {
+            if (String.IsNullOrEmpty(ipassApiKey) || String.IsNullOrEmpty(serviceBusConnectionString))
+            {
+                throw new InvalidOperationException("Missing configuration");
+            }
             _ipassApiKey = ipassApiKey;
             _serviceBusConnectionString = serviceBusConnectionString;
         }
@@ -111,25 +116,24 @@ namespace Flexinets.iPass
         /// <returns></returns>
         public async Task<(String hostedUserId, String activationUrl)> CreateUserAsync(Int32 customerId, UserModel user)
         {
-            var url = new Uri("https://api.ipass.com/v1/users?service=create");
+
             if (String.IsNullOrEmpty(user.Fullname))
             {
                 user.Fullname = "Jone Doe";
             }
-            var name = Utils.SplitFullname(user.Fullname);
-            if (String.IsNullOrEmpty(name.firstname))   // ipass requires both to be non empty
+            var (firstname, lastname) = Utils.SplitFullname(user.Fullname);
+            if (String.IsNullOrEmpty(firstname))   // ipass requires both to be non empty
             {
-                name.firstname = name.lastname;
+                firstname = lastname;
             }
-            var usernamedomain = $"{user.Username}@{user.Domain}";
             var content = new XDocument(new XDeclaration("1.0", "utf-8", "yes"),
                                         new XElement("endUser",
-                                           new XElement("fname") { Value = name.firstname },
-                                           new XElement("lname") { Value = name.lastname },
+                                           new XElement("fname") { Value = firstname },
+                                           new XElement("lname") { Value = lastname },
                                            new XElement("email") { Value = user.EmailAddress },
                                            new XElement("homeCountry") { Value = "AX" },
                                            new XElement("locale") { Value = "en-US" },
-                                           new XElement("username") { Value = usernamedomain },
+                                           new XElement("username") { Value = user.UsernameDomain },
                                            new XElement("password") { Value = "" },
                                            new XElement("enablePortalLogin") { Value = "false" },
                                            new XElement("departmentCode") { Value = "" },
@@ -140,17 +144,43 @@ namespace Flexinets.iPass
                                                new XElement("notification",
                                                    new XAttribute("subscribe", "false"),
                                                    new XElement("type") { Value = "Suspend" }))
-                                           )).ToString();
+                                           ));
 
+
+            var responseXml = await CreateHostedUserAsync(customerId, user, content);
+            var userid = responseXml.Root.Element("endUserId").Value;
+            var activationUrl = responseXml.Root.Element("selfServiceActivationUrl").Value;
+            return (userid, activationUrl);
+        }
+
+
+        private async Task<XDocument> CreateHostedUserAsync(Int32 customerId, UserModel user, XDocument content)
+        {
+            var url = new Uri("https://api.ipass.com/v1/users?service=create");
             using (var client = CreateAuthenticatedHttpClient(customerId))
             {
-                var response = await client.PostAsync(url, new StringContent(content, Encoding.UTF8));
-                var responseXml = XDocument.Parse(await response.Content.ReadAsStringAsync());
-                var userid = responseXml.Root.Element("endUserId").Value;
-                var activationUrl = responseXml.Root.Element("selfServiceActivationUrl").Value;
-                return (userid, activationUrl);
+                var response = await client.PostAsync(url, new StringContent(content.ToString(), Encoding.UTF8));
+                var document = XDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (document.Descendants().SingleOrDefault(o => o.Name == "errorCode")?.Value == "2005")
+                {
+                    _log.Warn($"Duplicate email for hosted user with email {user.EmailAddress}");
+                    content.Element("endUser").Element("email").Value = user.EmailAddress.Replace("@", $"+{new Random().Next()}@");
+                    response = await client.PostAsync(url, new StringContent(content.ToString(), Encoding.UTF8));
+                    document = XDocument.Parse(await response.Content.ReadAsStringAsync());
+                }
+
+                if (document.Descendants().Any(o => o.Name == "error"))
+                {
+                    _log.Error($"Something went wrong creating hosted user\n{document}");
+                    throw new InvalidOperationException($"Couldnt create hosted user: {document.Descendants().SingleOrDefault(o => o.Name == "errorMessage").Value}");
+                }
+
+                return document;
             }
         }
+
+
+
 
 
         /// <summary>
