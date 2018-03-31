@@ -76,12 +76,10 @@ namespace Flexinets.iPass
         {
             var url = new Uri("https://api.ipass.com/v1/users?service=update");
 
-            var name = Utils.SplitFullname(user.Fullname);
-            var content = new XDocument(new XDeclaration("1.0", "utf-8", "yes"),
-                                        new XElement("endUser",
-                                           new XElement("fname") { Value = name.firstname },
-                                           new XElement("lname") { Value = name.lastname },
-                                           new XElement("email") { Value = user.EmailAddress },
+            var (firstname, lastname) = Utils.SplitFullname(user.Fullname);
+            var enduser = new XElement("endUser",
+                                           new XElement("fname") { Value = firstname },
+                                           new XElement("lname") { Value = lastname },
                                            new XElement("homeCountry") { Value = "AX" },
                                            new XElement("locale") { Value = "en-US" },
                                            new XElement("username") { Value = user.UsernameDomain },
@@ -94,14 +92,34 @@ namespace Flexinets.iPass
                                                    new XElement("type") { Value = "Activate" }),
                                                new XElement("notification",
                                                    new XAttribute("subscribe", "false"),
-                                                   new XElement("type") { Value = "Suspend" }))
-                                           )).ToString();
+                                                   new XElement("type") { Value = "Suspend" })));
+
+            if (user.EmailAddress != null)
+            {
+                enduser.Add(new XElement("email") { Value = user.EmailAddress });
+            }
+
+            var content = new XDocument(new XDeclaration("1.0", "utf-8", "yes"), enduser);
 
             using (var client = CreateAuthenticatedHttpClient(customerId))
             {
-                var response = await client.PostAsync(url, new StringContent(content, Encoding.UTF8));
-                var responseXml = XDocument.Parse(await response.Content.ReadAsStringAsync());
-                var userid = responseXml.Root.Element("endUserId").Value;
+                var response = await client.PostAsync(url, new StringContent(content.ToString(), Encoding.UTF8));
+                var document = XDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (document.Descendants().SingleOrDefault(o => o.Name == "errorCode")?.Value == "2005")
+                {
+                    _log.Warn($"Duplicate email for hosted user with email {user.EmailAddress}");
+                    content.Element("endUser").Element("email").Value = user.EmailAddress.Replace("@", $"+{new Random().Next()}@");
+                    response = await client.PostAsync(url, new StringContent(content.ToString(), Encoding.UTF8));
+                    document = XDocument.Parse(await response.Content.ReadAsStringAsync());
+                }
+
+                if (document.Descendants().Any(o => o.Name == "error"))
+                {
+                    _log.Error($"Something went wrong creating hosted user\n{document}");
+                    throw new InvalidOperationException($"Couldnt create hosted user: {document.Descendants().SingleOrDefault(o => o.Name == "errorMessage").Value}");
+                }
+
+                var userid = document.Root.Element("endUserId").Value;
                 return userid;
             }
         }
@@ -176,26 +194,6 @@ namespace Flexinets.iPass
                 }
 
                 return document;
-            }
-        }
-
-
-
-
-
-        /// <summary>
-        /// Get a hosted ipass user
-        /// </summary>
-        /// <param name="customerId"></param>
-        /// <param name="usernamedomain"></param>
-        /// <returns></returns>
-        public async Task<String> GetUserAsync(Int32 customerId, String usernamedomain)
-        {
-            var url = $"https://api.ipass.com/v1/users?service=search&searchCriteria={usernamedomain}&page=1&limit=2";
-            using (var client = CreateAuthenticatedHttpClient(customerId))
-            {
-                var response = await client.GetStringAsync(url);
-                return response;
             }
         }
 
