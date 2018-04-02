@@ -1,20 +1,18 @@
 ﻿using Flexinets.Common;
 using Flexinets.iPass.Models;
-using Flexinets.Portal.Models;
 using log4net;
 using Microsoft.Azure.ServiceBus;
 using Microsoft.Azure.ServiceBus.Core;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
-using System.Linq;
 
 namespace Flexinets.iPass
 {
@@ -65,6 +63,28 @@ namespace Flexinets.iPass
         }
 
 
+        /// <summary> 
+        /// Get a hosted ipass user 
+        /// </summary> 
+        /// <param name="customerId"></param> 
+        /// <param name="usernamedomain"></param> 
+        /// <returns></returns> 
+        public async Task<IpassHostedUserModel> GetUserAsync(Int32 customerId, String usernamedomain)
+        {
+            var url = $"https://api.ipass.com/v1/users?service=search&searchCriteria={usernamedomain}&page=1&limit=1";
+            using (var client = CreateAuthenticatedHttpClient(customerId))
+            {
+                var document = XDocument.Parse(await client.GetStringAsync(url));
+                var endUser = document.Descendants("endUser").SingleOrDefault();
+                return new IpassHostedUserModel
+                {
+                    EmailAddress = endUser.Element("email").Value,
+                    Fullname = endUser.Element("fname") + " " + endUser.Element("lname")
+                };
+            }
+        }
+
+
         /// <summary>
         /// Update existing user
         /// Returns the hostedUserId if successful
@@ -72,7 +92,7 @@ namespace Flexinets.iPass
         /// <param name="customerId"></param>
         /// <param name="user"></param>
         /// <returns></returns>
-        public async Task<String> UpdateUserAsync(Int32 customerId, UserModel user)
+        public async Task<String> UpdateUserAsync(Int32 customerId, IpassHostedUserModel user)
         {
             var url = new Uri("https://api.ipass.com/v1/users?service=update");
 
@@ -119,8 +139,7 @@ namespace Flexinets.iPass
                     throw new InvalidOperationException($"Couldnt create hosted user: {document.Descendants().SingleOrDefault(o => o.Name == "errorMessage").Value}");
                 }
 
-                var userid = document.Root.Element("endUserId").Value;
-                return userid;
+                return document.Descendants("endUserId").SingleOrDefault().Value;
             }
         }
 
@@ -132,9 +151,8 @@ namespace Flexinets.iPass
         /// <param name="customerId"></param>
         /// <param name="user"></param>
         /// <returns></returns>
-        public async Task<(String hostedUserId, String activationUrl)> CreateUserAsync(Int32 customerId, UserModel user)
+        public async Task<(String hostedUserId, String activationUrl)> CreateUserAsync(Int32 customerId, IpassHostedUserModel user)
         {
-
             if (String.IsNullOrEmpty(user.Fullname))
             {
                 user.Fullname = "Jone Doe";
@@ -164,16 +182,6 @@ namespace Flexinets.iPass
                                                    new XElement("type") { Value = "Suspend" }))
                                            ));
 
-
-            var responseXml = await CreateHostedUserAsync(customerId, user, content);
-            var userid = responseXml.Root.Element("endUserId").Value;
-            var activationUrl = responseXml.Root.Element("selfServiceActivationUrl").Value;
-            return (userid, activationUrl);
-        }
-
-
-        private async Task<XDocument> CreateHostedUserAsync(Int32 customerId, UserModel user, XDocument content)
-        {
             var url = new Uri("https://api.ipass.com/v1/users?service=create");
             using (var client = CreateAuthenticatedHttpClient(customerId))
             {
@@ -193,7 +201,7 @@ namespace Flexinets.iPass
                     throw new InvalidOperationException($"Couldnt create hosted user: {document.Descendants().SingleOrDefault(o => o.Name == "errorMessage").Value}");
                 }
 
-                return document;
+                return (document.Descendants("endUserId").SingleOrDefault().Value, document.Descendants("selfServiceActivationUrl").SingleOrDefault().Value);
             }
         }
 
