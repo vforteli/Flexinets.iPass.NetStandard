@@ -94,9 +94,16 @@ namespace Flexinets.iPass
         /// <returns></returns>
         public async Task<String> UpdateUserAsync(Int32 customerId, IpassHostedUserModel user)
         {
-            var url = new Uri("https://api.ipass.com/v1/users?service=update");
-
+            if (String.IsNullOrEmpty(user.Fullname))
+            {
+                user.Fullname = "Jone Doe";
+            }
             var (firstname, lastname) = Utils.SplitFullname(user.Fullname);
+            if (String.IsNullOrEmpty(firstname))   // ipass requires both to be non empty
+            {
+                firstname = lastname;
+            }
+
             var enduser = new XElement("endUser",
                                            new XElement("fname") { Value = firstname },
                                            new XElement("lname") { Value = lastname },
@@ -123,6 +130,7 @@ namespace Flexinets.iPass
 
             using (var client = CreateAuthenticatedHttpClient(customerId))
             {
+                var url = new Uri("https://api.ipass.com/v1/users?service=update");
                 var response = await client.PostAsync(url, new StringContent(content.ToString(), Encoding.UTF8));
                 var document = XDocument.Parse(await response.Content.ReadAsStringAsync());
                 if (document.Descendants().SingleOrDefault(o => o.Name == "errorCode")?.Value == "2005")
