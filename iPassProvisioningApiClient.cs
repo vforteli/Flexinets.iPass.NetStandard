@@ -1,4 +1,4 @@
-﻿using Flexinets.Common;
+using Flexinets.Common;
 using Flexinets.iPass.Models;
 using log4net;
 using Microsoft.Azure.ServiceBus;
@@ -21,20 +21,22 @@ namespace Flexinets.iPass
         private readonly ILog _log = LogManager.GetLogger(typeof(iPassProvisioningApiClient));
         private readonly String _ipassApiKey;
         private readonly String _serviceBusConnectionString;
+        private readonly String _sbPasswordRetrievalConnectionString;
 
 
         /// <summary>
         /// Handles provisioning of hosted users
         /// </summary>
         /// <param name="contextFactory"></param>
-        public iPassProvisioningApiClient(String ipassApiKey, String serviceBusConnectionString)
+        public iPassProvisioningApiClient(String ipassApiKey, String serviceBusConnectionString, String sbPasswordRetrievalConnectionString)
         {
-            if (String.IsNullOrEmpty(ipassApiKey) || String.IsNullOrEmpty(serviceBusConnectionString))
+            if (String.IsNullOrEmpty(ipassApiKey) || String.IsNullOrEmpty(serviceBusConnectionString) || string.IsNullOrEmpty(sbPasswordRetrievalConnectionString))
             {
                 throw new InvalidOperationException("Missing configuration");
             }
             _ipassApiKey = ipassApiKey;
             _serviceBusConnectionString = serviceBusConnectionString;
+            _sbPasswordRetrievalConnectionString = sbPasswordRetrievalConnectionString;
         }
 
 
@@ -294,6 +296,40 @@ namespace Flexinets.iPass
             await SuspendUserAsync(customerId, usernamedomain);
             var response = await ActivateUserAsync(customerId, usernamedomain);
             return response.Root.Element("selfServiceActivationUrl").Value;
+        }
+
+
+        /// <summary>
+        /// Request password retrieval for hosted users
+        /// </summary>
+        /// <param name="emails"></param>
+        /// <returns></returns>
+        public async Task SendPasswordRetrievalEmail(IEnumerable<(String username, Int32 customerId)> users)
+        {            
+            // todo jfc it cant be this hard?
+            var serializer = new DataContractSerializer(typeof(IEnumerable<(String, Int32)>));
+            var ms = new MemoryStream();
+            using (var binaryDictionaryWriter = XmlDictionaryWriter.CreateBinaryWriter(ms))
+            {
+                serializer.WriteObject(binaryDictionaryWriter, users);
+                binaryDictionaryWriter.Flush();
+                var message = new Message(ms.ToArray());
+
+                var messageSender = new MessageSender(new ServiceBusConnectionStringBuilder(_sbPasswordRetrievalConnectionString));
+                await messageSender.SendAsync(message);
+            }
+        }
+
+
+
+        /// <summary>
+        /// Request password retrieval for hosted user
+        /// </summary>
+        /// <param name="emails"></param>
+        /// <returns></returns>
+        public async Task SendPasswordRetrievalEmail(String username, Int32 customerId)
+        {
+            await SendPasswordRetrievalEmail(new List<(String, Int32)> { (username, customerId) });
         }
 
 
